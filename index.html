@@ -142,7 +142,7 @@
       <div class="panel hidden" data-i="4">
         <p class="text-sm bg-[#f0e4cf] rounded-lg px-3 py-2">💡 浸釉工藝：為素燒胚體披上礦物釉彩外衣。</p>
         <div id="glz" class="grid grid-cols-4 gap-2 mt-4"></div>
-        <p class="text-sm mt-4 mb-2">施釉方式</p>
+        <p class="text-sm mt-4 mb-2">施釉方式（點選後，左側 3D 會示範動作）</p>
         <div id="gm" class="flex flex-wrap gap-2"></div>
         <p id="gst" class="text-xs text-[#8a7662] mt-3">請選擇一款釉色（生釉狀態，尚未燒製）。</p>
       </div>
@@ -249,8 +249,8 @@ const STAGE_AUDIO = {
   stage2: "",
   // 【組員C請在這裡貼上第 3 階段的 .mp3 音檔網址】
   stage3: "",
-  // 【組員C請在這裡貼上第 4 階段（浸釉水流聲）的 .mp3 音檔網址】
-  stage4: "stage4.mp3",
+  // 【組員C請在這裡貼上第 4 階段的 .mp3 音檔網址】（進入階段時的音樂；目前不播放）
+  stage4: "",
   // 【組員C請在這裡貼上第 5 階段（出窯虛擬開窯儀式）的 .mp3 音檔網址】
   stage5: "stage5.mp3",
   // 【組員C請在這裡貼上第 6 階段的 .mp3 音檔網址】（與階段 0 同一首）
@@ -264,15 +264,17 @@ const STAGE_AUDIO = {
   // 【組員C請在這裡貼上「開窯清脆聲」的 .mp3 音檔網址】
   kilnOpen: "kilnOpen.mp3",
   // 【組員C請在這裡貼上「花紋貼上音效」的 .mp3 音檔網址】
-  patternPlace: "patternPlace.mp3"
+  patternPlace: "patternPlace.mp3",
+  // 【組員C請在這裡貼上「浸釉水流聲」的 .mp3 音檔網址】（點選施釉方式時只播放 2 秒就停止）
+  glazeMethod: "stage4.mp3"
 };
 // 這些階段的音樂會循環播放（其他階段只播一次）
-const LOOP_STAGES=['stage0','stage4','stage6'];
+const LOOP_STAGES=['stage0','stage6'];
 // 揉土音檔很長，每次點擊只播放其中一段（單位：秒）
 const KNEAD_CLIPS=[[0,3.6],[4.2,7.8],[8.4,12.2]];
 
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
-const S={stage:0,knead:0,shape:null,craft:'wheel',h:100,w:50,m:50,bisque:false,bt:0,glaze:null,fired:false,editing:false,outline:true,gmode:'dip',kiln:'electric'};
+const S={stage:0,knead:0,shape:null,craft:'wheel',h:100,w:50,m:50,bisque:false,bt:0,glaze:null,fired:false,editing:false,outline:true,gmode:null,busy:false,anim:null,kiln:'electric'};
 let DEC=[],selId=null,uid=0,PROF=[];
 
 /* ================= 音訊引擎（只播放你提供的音檔，沒有音檔的地方保持安靜） ================= */
@@ -284,17 +286,17 @@ function play(key,loop,seg){
   const url=STAGE_AUDIO[key];
   if(!AU.on||!AU.unlocked||!url) return ()=>{};
   try{
-    const a=POOL.find(x=>!x._busy)||new Audio(); a._busy=true; let tm=null;
+    const a=POOL.find(x=>!x._busy)||new Audio(); a._busy=true; let tm=null, fi=null;
     a.onerror=()=>{a._busy=false; if(!AU.warned.has(url)){AU.warned.add(url); console.warn('找不到音檔：',url); toast('找不到音檔：'+url+'（請確認已和 index.html 放在同一個資料夾）');}};
     a.onended=()=>{a._busy=false;}; a.onloadedmetadata=null;
     a.loop=!!loop&&!seg; a.volume=.9; a.src=url;
     const start=()=>{
       if(seg) a.currentTime=seg[0];
       const p=a.play(); if(p&&p.catch) p.catch(e=>console.warn('音檔播放被瀏覽器擋下：',e&&e.name));
-      if(seg) tm=setTimeout(()=>{try{a.pause();}catch(e){} a._busy=false;},(seg[1]-seg[0])*1000);
+      if(seg){const d=(seg[1]-seg[0])*1000; tm=setTimeout(()=>{let v=.9; fi=setInterval(()=>{v-=.09; if(v<=0){clearInterval(fi); try{a.pause();}catch(e){} a._busy=false;} else a.volume=v;},40);},Math.max(0,d-400));}
     };
     if(seg) a.onloadedmetadata=()=>{a.onloadedmetadata=null; start();}; else start();
-    const stop=()=>{clearTimeout(tm); a.onloadedmetadata=null; a.onended=null; try{a.pause();}catch(e){} a._busy=false;};
+    const stop=()=>{clearTimeout(tm); clearInterval(fi); a.onloadedmetadata=null; a.onended=null; try{a.pause();}catch(e){} a._busy=false;};
     AU.active.add(stop); return stop;
   }catch(e){return ()=>{};}
 }
@@ -552,11 +554,20 @@ function drawDecal(g,d){
 }
 function paint(skipAR){
   const g=tc.getContext('2d'), G=S.glaze?GL[S.glaze]:null;
-  if(G&&G.grad){const gr=g.createLinearGradient(0,0,0,512); G.grad.forEach(([o,c])=>gr.addColorStop(o,c)); g.fillStyle=gr;}
-  else g.fillStyle=G?G.color:mix('#6b6762','#efe6d6',S.bt);
-  g.fillRect(0,0,1024,512);
-  if(G&&S.gmode==='pour'){const q=g.createLinearGradient(0,0,0,512); q.addColorStop(0,rgba('#efe6d6',0)); q.addColorStop(.5,rgba('#efe6d6',0)); q.addColorStop(1,rgba('#efe6d6',.92)); g.fillStyle=q; g.fillRect(0,0,1024,512);}
-  if(G&&S.gmode==='foot'){g.fillStyle='#efe6d6'; g.fillRect(0,470,1024,42);}
+  const A=S.anim, bis='#efe6d6';
+  const gf=(x,y,w,h)=>{if(G.grad){const q=g.createLinearGradient(0,0,0,512); G.grad.forEach(([o,c])=>q.addColorStop(o,c)); g.fillStyle=q;} else g.fillStyle=G.color; g.fillRect(x,y,w,h);};
+  const pourOv=()=>{const q=g.createLinearGradient(0,0,0,512); q.addColorStop(0,rgba(bis,0)); q.addColorStop(.5,rgba(bis,0)); q.addColorStop(1,rgba(bis,.92)); g.fillStyle=q; g.fillRect(0,0,1024,512);};
+  if(A&&G){ // 施釉動作進行中：從素燒白胚開始，依動作逐步上釉
+    g.fillStyle=bis; g.fillRect(0,0,1024,512);
+    if(A.mode==='pour'){gf(0,0,1024,A.f*512); pourOv();}
+    else{gf(0,(1-A.f)*512,1024,A.f*512); if(A.mode==='foot'&&A.w>0){g.fillStyle=bis; g.fillRect(0,470,A.w*1024,42);}}
+  }else{
+    if(G&&G.grad){const gr=g.createLinearGradient(0,0,0,512); G.grad.forEach(([o,c])=>gr.addColorStop(o,c)); g.fillStyle=gr;}
+    else g.fillStyle=G?G.color:mix('#6b6762','#efe6d6',S.bt);
+    g.fillRect(0,0,1024,512);
+    if(G&&S.gmode==='pour') pourOv();
+    if(G&&S.gmode==='foot'){g.fillStyle=bis; g.fillRect(0,470,1024,42);}
+  }
   if(S.shape) DEC.forEach(d=>drawDecal(g,d));
   if(G&&S.fired&&S.kiln==='wood'){let z=7; const rnd=()=>(z=(z*16807)%2147483647)/2147483647; for(let k=0;k<1400;k++){const y=Math.pow(rnd(),1.7)*300,x=rnd()*1024; g.fillStyle=`rgba(225,205,160,${.15+rnd()*.3})`; g.beginPath(); g.arc(x,y,.8+rnd()*2.2,0,7); g.fill();}}
   tex.needsUpdate=true;
@@ -698,8 +709,60 @@ $$('#lay .chip').forEach(b=>b.onclick=()=>applyLay(LAY[+b.dataset.i][1]));
 $('#words').innerHTML=WORDS.map(w=>`<button type="button" class="chip rounded-lg px-3 py-1.5 text-sm">${w}</button>`).join('');
 $$('#words .chip').forEach(b=>b.onclick=()=>{const w=b.textContent; lastPat='text'; lastTxt=w; addDecal('text',w);});
 // 階段 4：施釉方式
+// ===== 階段 4：施釉動作展示（浸釉／淋釉／露胎足） =====
+const gProps=new THREE.Group(); gProps.visible=false; scene.add(gProps);
+const basinMat=new THREE.MeshPhysicalMaterial({color:0xffffff,transparent:true,opacity:.16,side:THREE.DoubleSide,roughness:.1,depthWrite:false});
+const liqMat=new THREE.MeshStandardMaterial({transparent:true,opacity:.62,roughness:.25,depthWrite:false});
+const basin=new THREE.Mesh(new THREE.BufferGeometry(),basinMat), liquid=new THREE.Mesh(new THREE.BufferGeometry(),liqMat);
+const pit=new THREE.Group(), pitBody=new THREE.Mesh(new THREE.CylinderGeometry(.075,.05,.17,24),new THREE.MeshStandardMaterial({color:'#8a5a3c',roughness:.6}));
+pitBody.rotation.z=1.0; pit.add(pitBody);   // 淋釉用的釉杓
+const streamMat=new THREE.MeshStandardMaterial({roughness:.2});
+const stream=new THREE.Mesh(new THREE.CylinderGeometry(.014,.014,1,12).translate(0,-.5,0),streamMat);
+const sponge=new THREE.Mesh(new THREE.BoxGeometry(.1,.05,.05),new THREE.MeshStandardMaterial({color:'#e6d27a',roughness:.9})); // 擦足海綿
+gProps.add(basin,liquid,pit,stream,sponge);
+const ease=x=>x<.5?2*x*x:1-Math.pow(-2*x+2,2)/2;
+const GMNAME={dip:'浸釉',pour:'淋釉',foot:'露胎足'};
+function glazeAnim(mode){
+  const G=GL[S.glaze], col=new THREE.Color(G.solid);
+  S.busy=true; S.fired=false; S.gmode=mode; play('glazeMethod',false,[0,2]);
+  const top=PROF[PROF.length-1].y, rimR=PROF[PROF.length-1].x; let mr=0; PROF.forEach(q=>mr=Math.max(mr,q.x));
+  const rb=mr+.22, hb=top+.12, Hl=top+.05, footR=surf(.03).r+.03;
+  basin.geometry.dispose(); basin.geometry=new THREE.CylinderGeometry(rb,rb*.95,hb,48,1,true).translate(0,hb/2,0);
+  liquid.geometry.dispose(); liquid.geometry=new THREE.CylinderGeometry(rb*.97,rb*.93,1,48).translate(0,.5,0);
+  liqMat.color.copy(col); streamMat.color.copy(col);
+  const dip=mode!=='pour'; basin.visible=liquid.visible=dip; pit.visible=stream.visible=!dip; sponge.visible=false; gProps.visible=true;
+  const T=mode==='foot'?3600:2800, rise=mode==='foot'?.35:.5, hold=mode==='foot'?.42:.62, drain=mode==='foot'?.55:.85, t0=performance.now();
+  S.anim={mode,f:0,w:0};
+  const iv=setInterval(()=>{
+    const p=Math.min(1,(performance.now()-t0)/T), A=S.anim;
+    if(mode==='pour'){
+      A.f=ease(Math.min(1,p/.85));
+      const yf=top*(1-.85*A.f); let rs=0; PROF.forEach(q=>{if(q.y>=yf) rs=Math.max(rs,q.x);}); rs+=.03;   // 液流貼著瓶身外側落下
+      const a=p*Math.PI*3, R=rs+.075, py=top+.3, on=p<.88;
+      pit.position.set(Math.cos(a)*R,py,Math.sin(a)*R); pit.rotation.y=-a;
+      stream.position.set(Math.cos(a)*rs,py+.05,Math.sin(a)*rs); stream.scale.y=Math.max(.01,py+.05-yf);
+      pit.visible=stream.visible=on;
+    }else{
+      A.f=p<rise?ease(p/rise):1;
+      const lv=p<rise?ease(p/rise):p<hold?1:1-ease(Math.min(1,(p-hold)/(drain-hold)));
+      liquid.scale.y=Math.max(.001,Hl*lv); liquid.visible=lv>.01; basin.visible=p<drain+.05;
+      if(mode==='foot'&&p>=.55){
+        const w=(p-.55)/.45, ph=w*Math.PI*2; A.w=w; sponge.visible=w<1;
+        sponge.position.set(footR*Math.sin(ph),.035,footR*Math.cos(ph)); sponge.rotation.y=ph;
+      }
+    }
+    if(p>=1){
+      clearInterval(iv); S.anim=null; S.busy=false; gProps.visible=false; paint();
+      $('#gst').textContent=`${G.name}・${GMNAME[mode]}完成：生釉半霧面狀態，尚未燒製。`;
+    }else paint(true);
+  },30);
+}
 $('#gm').innerHTML=GM.map(([k,n])=>`<button type="button" class="chip ${k===S.gmode?'on':''} rounded-lg px-3 py-1.5 text-sm" data-k="${k}">${n}</button>`).join('');
-$$('#gm .chip').forEach(b=>b.onclick=()=>{S.gmode=b.dataset.k; S.fired=false; $$('#gm .chip').forEach(x=>x.classList.toggle('on',x===b)); paint();});
+$$('#gm .chip').forEach(b=>b.onclick=()=>{
+  if(S.busy) return;
+  if(!S.glaze) return toast('請先選擇一款釉色，再選擇施釉方式');
+  $$('#gm .chip').forEach(x=>x.classList.toggle('on',x===b)); glazeAnim(b.dataset.k);
+});
 // 階段 5：窯爐樣板
 $('#kt').innerHTML=Object.entries(KILNS).map(([k,v])=>`<button type="button" class="chip ${k===S.kiln?'on':''} rounded-lg px-3 py-1.5 text-sm" data-k="${k}">${v[0]}・${v[1]}</button>`).join('');
 $$('#kt .chip').forEach(b=>b.onclick=()=>{
@@ -725,10 +788,12 @@ $('#bisque').onclick=()=>{
 
 $('#glz').innerHTML=Object.entries(GL).map(([k,g])=>`<button class="flex flex-col items-center gap-1 text-[11px]" data-g="${k}"><i class="block w-12 h-12 rounded-full border-2 border-[#dccfb8]" style="background:${g.grad?`linear-gradient(${g.grad.map(x=>x[1]).join(',')})`:g.color}"></i>${g.name.slice(3)}</button>`).join('');
 $$('#glz button').forEach(b=>b.onclick=()=>{
+  if(S.busy) return;
   S.glaze=b.dataset.g; S.fired=false; $$('#glz i').forEach(i=>i.style.borderColor='#dccfb8'); b.querySelector('i').style.borderColor='#5a3e2b';
   $('#gst').textContent=`${GL[S.glaze].name}：生釉半霧面狀態，尚未燒製。`; $('#fst').textContent='狀態：生釉胚體，等待入窯。'; paint();
 });
 $('#fire').onclick=()=>{
+  if(S.busy) return toast('施釉動作進行中，請稍候');
   if(!S.glaze) return toast('請先到上一步選擇釉色');
   if(S.fired) return toast('作品已燒成，可以進入下一步檢視。');
   const b=$('#fire'); b.disabled=true; $('#fst').textContent='燒製中…'; const stop=play('kilnFire',true);
